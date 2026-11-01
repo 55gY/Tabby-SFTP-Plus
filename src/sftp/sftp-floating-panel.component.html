@@ -186,6 +186,14 @@
       <line x1="5" y1="10.25" x2="9.5" y2="10.25"/>
       </svg>
     </ng-template>
+    <!-- ★ 2026-11-01（meta）：上传图标（向上箭头 + 托盘） -->
+    <ng-template #tbIconUpload>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="8" y1="10.5" x2="8" y2="3.5"/>
+      <polyline points="5,6.5 8,3.5 11,6.5"/>
+      <line x1="3" y1="12.5" x2="13" y2="12.5"/>
+      </svg>
+    </ng-template>
     <ng-template #tbIconSettings>
       <svg viewBox="0 0 16 16" fill="currentColor">
       <g transform="translate(8 8) scale(0.62) translate(-12 -12)">
@@ -270,6 +278,14 @@
                     title="{{ i18n.t('transfer.log') }}">
 <ng-container *ngTemplateOutlet="tbIconTransferLog"></ng-container>
           </button>
+            <!-- ★ 2026-11-01（meta）：上传按钮（本机文件/文件夹 → 远程，不依赖本地栏）。
+                 可见性由 topBarItemAvailable('upload') 控制（= canPickerUpload，远程未就绪时隐藏）。
+                 点开下拉选「上传文件…/上传文件夹…」，点外部由 _docClickCapture 收起。 -->
+            <button *ngIf="item === 'upload'" class="btn-link btn-icon btn-upload" (click)="toggleUploadMenu($event)"
+                    [class.active]="_uploadMenuVisible"
+                    title="{{ i18n.t('topbar.upload') }}">
+<ng-container *ngTemplateOutlet="tbIconUpload"></ng-container>
+          </button>
             <button *ngIf="item === 'settings'" class="btn-link btn-icon btn-settings" (click)="openPluginSettings()"
                     title="{{ i18n.t('app.openSettings') }}">
 <ng-container *ngTemplateOutlet="tbIconSettings"></ng-container>
@@ -318,6 +334,8 @@
                   <ng-container *ngSwitchCase="'pathMode'"><ng-container *ngTemplateOutlet="tbIconPathMode"></ng-container></ng-container>
                   <ng-container *ngSwitchCase="'layout'"><ng-container *ngTemplateOutlet="tbIconLayout"></ng-container></ng-container>
                   <ng-container *ngSwitchCase="'transferLog'"><ng-container *ngTemplateOutlet="tbIconTransferLog"></ng-container></ng-container>
+                  <!-- ★ 2026-11-01（meta）：上传按钮收进 ⋯ 菜单后仍凭图标可认 -->
+                  <ng-container *ngSwitchCase="'upload'"><ng-container *ngTemplateOutlet="tbIconUpload"></ng-container></ng-container>
                   <ng-container *ngSwitchCase="'settings'"><ng-container *ngTemplateOutlet="tbIconSettings"></ng-container></ng-container>
                   <ng-container *ngSwitchCase="'minimize'"><ng-container *ngTemplateOutlet="tbIconMinimize"></ng-container></ng-container>
                   <ng-container *ngSwitchCase="'maximize'"><ng-container *ngTemplateOutlet="tbIconMaximize"></ng-container></ng-container>
@@ -335,6 +353,24 @@
           </div>
         </div>
       </div>
+
+      <!-- ★ 2026-11-01（meta）：上传下拉菜单（顶栏「上传」按钮点开）。fixed 定位到按钮正下方，
+           点外部由面板 _docClickCapture 收起。 -->
+      <div class="upload-dropdown-menu" *ngIf="_uploadMenuVisible"
+        [style.left.px]="_uploadMenuX" [style.top.px]="_uploadMenuY"
+        (mousedown)="$event.stopPropagation()" (click)="$event.stopPropagation()">
+        <button class="upload-dropdown-item" (click)="openUploadPicker('files')">
+          {{ i18n.t('topbar.uploadFiles') }}
+        </button>
+        <button class="upload-dropdown-item" (click)="openUploadPicker('folder')">
+          {{ i18n.t('topbar.uploadFolder') }}
+        </button>
+      </div>
+
+      <!-- ★ 2026-11-01（meta）：选择器上传的隐藏 input（常驻 DOM，ViewChild 引用）。
+           文件多选 / 文件夹（webkitdirectory 一次选一个目录）。display:none 仍可 .click() 弹出选择器。 -->
+      <input #uploadFilesInput type="file" multiple style="display:none" (change)="onUploadPickerChange($event, 'files')">
+      <input #uploadFolderInput type="file" webkitdirectory style="display:none" (change)="onUploadPickerChange($event, 'folder')">
 
       <!-- 标题栏右键菜单：还原默认面板大小 -->
       <div class="sftp-title-menu" *ngIf="topBarMenuVisible"
@@ -827,6 +863,8 @@
         [canTransfer]="_ctxCanTransfer"
         [modKey]="modKey"
         [menuOrder]="contextMenuOrder"
+        <!-- ★ 2026-11-01（meta）：选择器上传两项的可见性（远程栏 + 已连接） -->
+        [pickerUploadEnabled]="canPickerUpload"
         [panelHotkeyShortcuts]="contextMenuHotkeyShortcuts"
         [groupByPane]="contextMenuEntry ? null : contextMenuDisplayPane"
         [groupBy]="_ctxGroupBy"

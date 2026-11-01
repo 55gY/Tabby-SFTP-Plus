@@ -383,13 +383,16 @@ export function defaultSftpPlusConfig(): SftpPlusPluginConfig {
     // ★ 2026-10-22（Deepseek-V4.1-Flash）：外部编辑自动上传开关，默认关（走方案 B 提示）
     editorAutoUploadExternal: false,
     panelHotkeys: defaultPanelHotkeys(),
-    contextMenuOrder: ['transfer', 'upload', 'download', 'openLocal', 'viewFile', 'editFile', 'revealInExplorer', 'copy', 'cut', 'paste', 'rename', 'delete', 'chmod', 'details', 'newFolder', 'newFile', 'refresh', 'selectAll', 'selectInvert', 'copyPath'],
+    // ★ 2026-11-01（meta）：contextMenuOrder 补 'uploadFiles'/'uploadFolder'（选择器上传：本机文件/文件夹→远程），
+    //   位置紧随既有 'upload'（本地栏右键上传）之后、同属传输类。
+    contextMenuOrder: ['transfer', 'upload', 'uploadFiles', 'uploadFolder', 'download', 'openLocal', 'viewFile', 'editFile', 'revealInExplorer', 'copy', 'cut', 'paste', 'rename', 'delete', 'chmod', 'details', 'newFolder', 'newFile', 'refresh', 'selectAll', 'selectInvert', 'copyPath'],
     contextMenuDisabled: [],
     // ★ 2026-10-19（Deepseek-V4.1-Flash）：顶栏按钮默认「全部固定 + 折叠关闭」= 与历史行为一致。
     //   文案 id 必须与 sftp/core/top-bar-items.ts 的 DEFAULT_TOP_BAR_* 一致（此处写死字面量是为了
     //   让 config schema 保持零依赖；两处都由 TOP_BAR_ITEMS 派生，改 id 时两处一起改）。
-    topBarOrder: ['pathMode', 'layout', 'transferLog', 'settings', 'minimize', 'maximize'],
-    topBarPinned: ['pathMode', 'layout', 'transferLog', 'settings', 'minimize', 'maximize'],
+    // ★ 2026-11-01（meta）：topBarOrder/topBarPinned 补 'upload'（顶栏上传按钮），紧跟 'transferLog'（同属传输类）。
+    topBarOrder: ['pathMode', 'layout', 'transferLog', 'upload', 'settings', 'minimize', 'maximize'],
+    topBarPinned: ['pathMode', 'layout', 'transferLog', 'upload', 'settings', 'minimize', 'maximize'],
     topBarOverflow: false,
     // ★ 2026-10-19（Deepseek-V4.1-Flash）：默认只认顶栏连接标题 = 与历史行为一致
     connPickerTrigger: 'topbar',

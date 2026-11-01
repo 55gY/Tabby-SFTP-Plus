@@ -23,7 +23,8 @@
  *     · 是否显示由 `topBarOverflow` 总开关决定（关掉时它连同菜单一起消失）；
  *     · 不进入 ⋯ 菜单自身的列表（否则会出现「点自己打开自己」的递归入口）。
  */
-export type TopBarItemId = 'pathMode' | 'layout' | 'transferLog' | 'settings' | 'minimize' | 'maximize' | 'overflow' | 'close'
+// ★ 2026-11-01（meta）：新增 `upload`（顶栏上传按钮）—— 单栏远程布局下无需本地栏即可上传本机文件/文件夹。
+export type TopBarItemId = 'pathMode' | 'layout' | 'transferLog' | 'upload' | 'settings' | 'minimize' | 'maximize' | 'overflow' | 'close'
 
 export interface TopBarItemDef {
   id: TopBarItemId
@@ -36,6 +37,8 @@ export const TOP_BAR_ITEMS: TopBarItemDef[] = [
   { id: 'pathMode', labelKey: 'topbar.pathMode' },
   { id: 'layout', labelKey: 'settings.layout' },
   { id: 'transferLog', labelKey: 'transfer.log' },
+  // ★ 2026-11-01（meta）：上传按钮默认紧跟传输记录（同属传输类），点开下拉选「上传文件…/上传文件夹…」。
+  { id: 'upload', labelKey: 'topbar.upload' },
   { id: 'settings', labelKey: 'app.openSettings' },
   { id: 'minimize', labelKey: 'topbar.minimize' },
   { id: 'maximize', labelKey: 'app.maximize' },

@@ -556,6 +556,37 @@ export const SFTP_PANEL_STYLES = `
       flex-direction: column;
       gap: 1px;
     }
+    /* ★ 2026-11-01（meta）：上传下拉菜单（顶栏「上传」按钮点开），视觉仿 .topbar-overflow-menu。
+       定位：position:fixed + JS 按按钮 rect 算坐标（顶栏按钮可定制排序，写死 left 不准；与 .sftp-title-menu 同模式）。 */
+    .sftp-root .upload-dropdown-menu {
+      position: fixed;
+      min-width: 140px;
+      padding: 4px;
+      background: var(--_bg);
+      border: 1px solid var(--_border);
+      border-radius: 6px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+      z-index: 200005;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+    .sftp-root .upload-dropdown-item {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      padding: 5px 8px;
+      background: none;
+      border: none;
+      border-radius: 4px;
+      color: var(--_text);
+      font-size: 12px;
+      font-family: inherit;
+      text-align: left;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .sftp-root .upload-dropdown-item:hover { background: var(--_hover); }
     /* ★ 2026-10-23（Deepseek-V4.1-Flash）：每行 = 「执行按钮 + 图钉」，所以行本身从 <button> 改成 div。
        ⛔ 别改回 button：HTML 不允许 button 嵌套 button，浏览器会把图钉拆到行外。 */
     .sftp-root .topbar-overflow-item {

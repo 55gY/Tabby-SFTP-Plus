@@ -1948,6 +1948,9 @@ msgstr "Local copy"
 msgid "notify.dropTargetNotLocal"
 msgstr "This endpoint is not a local disk; dropping here is not supported"
 
+msgid "notify.dropOsPathsUnresolvable"
+msgstr "Could not resolve the dropped file paths; please use the Upload button in the top bar instead"
+
 msgid "conflict.digestUnavailableRemote"
 msgstr "Digest unavailable (sizes differ, or the remote server does not support it)"
 
@@ -1998,6 +2001,18 @@ msgstr "Path mode"
 
 msgid "topbar.minimize"
 msgstr "Minimize"
+
+msgid "topbar.upload"
+msgstr "Upload"
+
+msgid "topbar.uploadFiles"
+msgstr "Upload files…"
+
+msgid "topbar.uploadFolder"
+msgstr "Upload folder…"
+
+msgid "topbar.uploadPickFailed"
+msgstr "Could not resolve the selected file paths"
 
 msgid "settings.connPickerTrigger"
 msgstr "Connection switcher trigger"

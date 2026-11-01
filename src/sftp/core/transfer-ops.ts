@@ -867,7 +867,15 @@ export class MergeLocalDirUseCase {
 export class UploadBatchUseCase {
   constructor(private readonly ports: TransferUseCasePorts) {}
 
-  async execute(localPaths: string[], remoteDir: string, name: string): Promise<TarChannelResult> {
+  async execute(
+    localPaths: string[],
+    remoteDir: string,
+    name: string,
+    // ★ 2026-11-01（meta）：true 时直接 'fallback' —— 覆盖直传下批量 tar 的「解包后 mv 原子搬入」
+    //   落地方案处理不了已存在目标（目录 mv 会嵌套成 dst/dir/dir）；退回逐文件通道，
+    //   UploadPathUseCase 的 forceOverwrite 分支已正确处理覆盖。
+    forceOverwrite = false,
+  ): Promise<TarChannelResult> {
     const tarChannel = this.ports.tarChannel
     // ★ 2026-10-09 审计 P0-2 根治：原先写成
     //   `const probe = this.ports.conflictDetection?.checkRemotePathExists`
@@ -885,6 +893,8 @@ export class UploadBatchUseCase {
     if (mode === 'sftpOnly') return 'fallback'
     if (localPaths.length < 2) return 'fallback'
     if (new Set(localPaths.map(p => path.dirname(p))).size !== 1) return 'fallback'
+    // ★ 2026-11-01（meta）：覆盖直传不走批量打包（见形参注释），直接退回逐文件
+    if (forceOverwrite) return 'fallback'
     for (const p of localPaths) {
       const target = path.posix.join(remoteDir, path.basename(p))
       let exists = false
@@ -923,6 +933,9 @@ export class UploadPathUseCase {
     localPath: string,
     topCtx?: FolderTransferCtx,
     inLimiter?: ConcurrencyLimiter,
+    // ★ 2026-11-01（meta）：forceOverwrite=true 时跳过全部冲突检测、直接覆写（选择器上传 / 拖放上传专用；
+    //   与下载侧 forceOverwrite 同构，老调用方默认 false 行为不变）
+    forceOverwrite = false,
   ): Promise<boolean> {
     if (!this.ports.sftp.hasSession()) return false
     const st = await this.ports.localFs.lstat(localPath)
@@ -934,10 +947,10 @@ export class UploadPathUseCase {
     const isTop = !topCtx
 
     if (st.isDirectory()) {
-      return this._uploadDirectory(remoteDir, localPath, remoteTarget, st, isTop, topCtx, inLimiter)
+      return this._uploadDirectory(remoteDir, localPath, remoteTarget, st, isTop, topCtx, inLimiter, forceOverwrite)
     }
 
-    return this._uploadFile(remoteDir, localPath, remoteTarget, st, isTop, topCtx)
+    return this._uploadFile(remoteDir, localPath, remoteTarget, st, isTop, topCtx, forceOverwrite)
   }
 
   private async _uploadDirectory(
@@ -948,18 +961,23 @@ export class UploadPathUseCase {
     isTop: boolean,
     topCtx?: FolderTransferCtx,
     inLimiter?: ConcurrencyLimiter,
+    forceOverwrite = false,
   ): Promise<boolean> {
     let ctx = topCtx
     if (isTop) {
       const base = path.basename(localPath)
       // ★ 2026-08-11：tar 打包通道——仅当远端目标不存在（全新上传）时启用；
       //   success 传输成功；failed 中止；fallback 则平滑回退到常规逐文件流式传输
-      if (this.ports.tarChannel && !(await this.ports.conflictDetection.checkRemotePathExists(remoteTarget, true))) {
+      // ★ 2026-11-01（meta）：forceOverwrite 时跳过「目标不存在」检查 —— 覆盖直传下目标存在与否
+      //   都走打包通道（tar 解包天然覆写），不再为「已存在」退回逐文件。
+      if (this.ports.tarChannel && (forceOverwrite || !(await this.ports.conflictDetection.checkRemotePathExists(remoteTarget, true)))) {
         // ★ 2026-09-29（三）：此处 mergeIntoExisting 恒为 false —— 目标不存在才走到这里，
         //   走的必然是「原子 mv 搬入」。目标**已存在**时不在这里强行打包：先弹目录冲突让用户
         //   确认（跳过/重命名/覆盖），用户选「覆盖」后由 MergeLocalDirUseCase → 打包通道
         //   的 mergeIntoExisting=true 分支接手（见 _tryTarUpload），此时才允许合并覆盖。
-        const r = await this.ports.tarChannel.tryUploadDir(localPath, remoteTarget, this.ports.folder, base, false, this.ports.tarChannelMode)
+        // ★ 2026-11-01（meta）：forceOverwrite 时 mergeIntoExisting=true —— 覆盖直传语义下目标存在与否
+        //   都走打包通道（解包合并覆盖），不再弹目录冲突。
+        const r = await this.ports.tarChannel.tryUploadDir(localPath, remoteTarget, this.ports.folder, base, forceOverwrite, this.ports.tarChannelMode)
         if (r === 'success') return true
         // ★ 2026-09-29：仅 TAR 模式下 'failed' 既可能是用户中止，也可能是打包通道不可用
         //   （此时通道内已提示原因与解决方法、并把进度条目收尾为失败），一律不再回退。
@@ -982,7 +1000,8 @@ export class UploadPathUseCase {
       totalSize = s.size
       itemCount = s.count
       ctx = this.ports.folder.start(base, 'upload', remoteTarget, localPath, totalSize, itemCount)
-      if (await this.ports.conflictDetection.checkRemotePathExists(remoteTarget, true)) {
+      // ★ 2026-11-01（meta）：forceOverwrite 时跳过目录级冲突检测 —— 直接 mkdir（已存在则忽略）后逐文件覆写。
+      if (!forceOverwrite && await this.ports.conflictDetection.checkRemotePathExists(remoteTarget, true)) {
         let remoteFileSize: number | undefined
         let remoteFileMtime: number | undefined
 
@@ -1076,12 +1095,13 @@ export class UploadPathUseCase {
             // ★ 2026-08-10 修复：目录只过中止/暂停门控、不占槽直接递归——
             //   目录持槽等子项会在嵌套层数 ≥ 并发数时死锁（槽位被目录占满）
             if (!(await dirGate(this.ports.folder, ctx))) return false
-            return this.execute(remoteTarget, childLocal, ctx, limiter)
+            // ★ 2026-11-01（meta）：forceOverwrite 透传给子目录递归
+            return this.execute(remoteTarget, childLocal, ctx, limiter, forceOverwrite)
           }
           // 文件：门控 + 占槽，实际字节传输受限制器约束
           return gatedDirTask(this.ports.folder, ctx, limiter, () =>
             this._uploadFile(
-              remoteTarget, childLocal, path.posix.join(remoteTarget, safeName), st, false, ctx,
+              remoteTarget, childLocal, path.posix.join(remoteTarget, safeName), st, false, ctx, forceOverwrite,
             ))
         })
       const folded = foldSettled(await Promise.allSettled(tasks))
@@ -1110,11 +1130,16 @@ export class UploadPathUseCase {
     st: import('fs').Stats,
     isTop: boolean,
     topCtx?: FolderTransferCtx,
+    // ★ 2026-11-01（meta）：true 时跳过冲突检测、直接覆写（选择器上传 / 拖放上传）
+    forceOverwrite = false,
   ): Promise<boolean> {
     const base = path.basename(localPath)
-    const conflictResult = await this.ports.conflictDetection.checkUploadConflict(
-      remoteTarget, localPath, st.size, st.mtimeMs,
-    )
+    // ★ 2026-11-01（meta）：forceOverwrite 时跳过 checkUploadConflict —— 视为 no-conflict 直接上传（覆写）
+    const conflictResult = forceOverwrite
+      ? { kind: 'no-conflict' as const }
+      : await this.ports.conflictDetection.checkUploadConflict(
+          remoteTarget, localPath, st.size, st.mtimeMs,
+        )
     if (conflictResult.kind === 'auto-skipped') {
       // ★ 2026-09-07 issue #15+：内容已确认相同，跳过本次上传。
       //   detector 已通过构造回调同步通知 host 把对应的传输记录标为「已跳过」。

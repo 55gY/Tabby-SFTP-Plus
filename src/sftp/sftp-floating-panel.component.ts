@@ -3541,10 +3541,13 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       },
       resetFileDragState: () => panel._resetFileDragState(),
       uploadPathToRemote: (remoteDir, localPath) => panel.uploadPathToRemote(remoteDir, localPath),
-      streamUploadOne: (localPath, destRemoteDir) => panel._streamUploadOne(localPath, destRemoteDir),
+      // ★ 2026-11-01（meta）：opts 透传（OS 拖放到远程时的覆盖直传 / 本机源声明）
+      streamUploadOne: (localPath, destRemoteDir, opts) =>
+        panel._streamUploadOne(localPath, destRemoteDir, opts?.forceOverwrite, opts?.srcIsLocal),
       // ★ 2026-09-29（四）：拖拽链路的多选批量打包入口（与 ctxUpload 共用同一个实现，
       //   保证「多选」这个事实只在 _tryBatchUpload 一处被翻译成批量请求）
-      tryUploadBatch: (localPaths, remoteDir) => panel._tryBatchUpload(localPaths, remoteDir),
+      // ★ 2026-11-01（meta）：opts 透传（覆盖直传时批量用例内退回逐文件）
+      tryUploadBatch: (localPaths, remoteDir, opts) => panel._tryBatchUpload(localPaths, remoteDir, opts?.forceOverwrite),
       streamDownloadOne: (file, targetLocalDir) => panel._streamDownloadOne(file, targetLocalDir),
       // ★ 2026-10-20（用户反馈）：目标栏是远程端点时的拖放落点 —— 与右键「传输」
       //   走同一条 r2r 通道（冲突框 / remote-copy 记录 / 进度条目）。
@@ -4233,8 +4236,13 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       // Early return: skip expensive DOM queries when no popup/menu is open
       if (!this.showBookmarks && !this.contextMenuVisible && !this.headerMenuVisible
         && !this.localFilterVisible && !this.remoteFilterVisible && !this._connPickerSide
-        && !this._topBarOverflowVisible) return
+        && !this._topBarOverflowVisible && !this._uploadMenuVisible) return
       const target = ev.target as HTMLElement | null
+      // ★ 2026-11-01（meta）：上传下拉菜单点外部关闭（与 ⋯ 折叠菜单同模式：捕获阶段）
+      if (this._uploadMenuVisible
+        && !target?.closest('.upload-dropdown-menu') && !target?.closest('.btn-upload')) {
+        this.zone.run(() => this.closeUploadMenu())
+      }
       // ★ 2026-10-19（Deepseek-V4.1-Flash）：⋯ 折叠菜单点外部关闭（捕获阶段，理由同连接选择器）
       if (this._topBarOverflowVisible
         && !target?.closest('.topbar-overflow-menu') && !target?.closest('.btn-overflow')) {
@@ -9456,6 +9464,9 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       case 'viewFile': void this.ctxViewFile(); break
       case 'editFile': void this.ctxEditFile(); break
       case 'upload': void this.ctxUpload(); break
+      // ★ 2026-11-01（meta）：选择器上传（本机→远程，不依赖本地栏；覆盖直传）
+      case 'uploadFiles': this.closeContextMenu(); this.openUploadPicker('files'); break
+      case 'uploadFolder': this.closeContextMenu(); this.openUploadPicker('folder'); break
       case 'download': void this.ctxDownload(); break
       // ★ 2026-10-20：两端端点同类（本机↔本机 / 远程↔远程）——没有上/下方向
       case 'transfer': void this.ctxTransfer(); break
@@ -10286,6 +10297,8 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
   private async uploadPathToRemote(
     remoteDir: string, localPath: string,
     _top?: FolderTransferCtx,
+    // ★ 2026-11-01（meta）：覆盖直传（选择器上传 / 拖放上传）—— 跳过冲突检测直接覆写
+    forceOverwrite = false,
   ): Promise<boolean> {
     // ★ 2026-09-25 P1：仅顶层调用做重复入队只读预检（真正的槽位由协调器认领/释放；
     //   嵌套子目录/冲突覆盖重入必须放行）。远端目标与 UploadPathUseCase 一致
@@ -10301,7 +10314,7 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       // ★ 2026-09-20 P1-2：把任务 ref 绑到异步调用链上——该任务（含递归子目录、并发子文件）
       //   里所有叶子传输都经 currentTaskScope() 解析到这个 ref，不再被后启动任务覆盖
       return await runInTaskScope(cancelRef, () =>
-        this._transferCoordinator.uploadPathToRemote(remoteDir, localPath, _top))
+        this._transferCoordinator.uploadPathToRemote(remoteDir, localPath, _top, forceOverwrite))
     } finally {
       this._cancelRefs.delete(cancelRef)
       // ★ 高危#13修复：将清理逻辑原子化，只在当前cancelRef确实属于自己时才清理，
@@ -13648,6 +13661,8 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
     localPath: string; entry: PanelTransferItem; finish: () => void; remoteDir: string
     /** ★ issue #27 P2：远程↔远程（左栏远程端点时，上传源为左栏远程会话） */
     r2r?: boolean; srcPath?: string; dstPath?: string; srcSession?: any; dstSession?: any; isDir?: boolean; mode?: number
+    /** ★ 2026-11-01（meta）：覆盖直传（选择器上传 / 拖放上传） */
+    forceOverwrite?: boolean
   }> = []
 
   /**
@@ -13729,7 +13744,7 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
    * 入口共三处（右键/菜单上传、拖拽的两个 payload 分支），全部经由本方法：
    * 「多选」这个事实只有这一处被翻译成批量请求，避免三条链各自判断而行为不一致。
    */
-  private async _tryBatchUpload(localPaths: string[], remoteDir: string): Promise<boolean> {
+  private async _tryBatchUpload(localPaths: string[], remoteDir: string, forceOverwrite = false): Promise<boolean> {
     if (localPaths.length < 2) return false
     // 危险条目名（. / .. / 含分隔符 / 控制字符）直接放弃整批 —— 不做「过滤掉危险项后凑一批」，
     // 那会让用户以为整批都传了。逐项路径本来就会各自 skip 并留日志，交回给它更诚实。
@@ -13747,7 +13762,8 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       label = `${path.basename(remoteDir)} (${localPaths.length})`
     }
     try {
-      return await this._transferCoordinator.uploadBatchToRemote(localPaths, remoteDir, label)
+      // ★ 2026-11-01（meta）：forceOverwrite 透传（覆盖直传时批量用例内退回逐文件）
+      return await this._transferCoordinator.uploadBatchToRemote(localPaths, remoteDir, label, forceOverwrite)
     } catch (e) {
       log.warn('[batch-upload] batch path unavailable, using per-file flow:', e)
       return false
@@ -13759,9 +13775,10 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
    *   多选/拖拽的全部条目立即出现在传输列表中；真正开始传输时由
    *   trackTransfer/_startFolderTransfer 认领占位条目，并发由 _uploadConcurrency 限制。
    */
-  private _streamUploadOne(localPath: string, targetRemoteDir?: string): Promise<void> {
+  private _streamUploadOne(localPath: string, targetRemoteDir?: string, forceOverwrite = false, srcIsLocal = false): Promise<void> {
     // ★ issue #27 P2：左栏远程端点 → 上传源是左栏远程会话，目标是右栏远程会话（远程↔远程）
-    if (this._leftKind === 'remote') {
+    // ★ 2026-11-01（meta）：srcIsLocal=true 时源确定是本机磁盘（选择器上传 / OS 拖放），跳过 r2r 分支
+    if (!srcIsLocal && this._leftKind === 'remote') {
       // r2r 通道回传的是「是否真的传成功」，本包装按旧签名吞掉（调用方不需要）
       return this._streamUploadOneRemote(localPath, targetRemoteDir).then(() => undefined)
     }
@@ -13823,7 +13840,11 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
         }
         resolve()
       }
-      this._upQueue.push({ localPath, entry, finish, remoteDir })
+      this._upQueue.push({
+        localPath, entry, finish, remoteDir,
+        // ★ 2026-11-01（meta）：覆盖直传标记（选择器上传 / 拖放上传），_runQueuedUpload 透传给 uploadPathToRemote
+        forceOverwrite,
+      })
       this._pumpUploadQueue()
     })
   }
@@ -13984,6 +14005,8 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       localPath: string; entry: PanelTransferItem; finish: () => void; remoteDir: string
       /** ★ issue #27 P2：远程↔远程标记与源/目标会话 */
       r2r?: boolean; srcPath?: string; dstPath?: string; srcSession?: any; dstSession?: any; isDir?: boolean; mode?: number
+      /** ★ 2026-11-01（meta）：覆盖直传（选择器上传 / 拖放上传） */
+      forceOverwrite?: boolean
     },
   ): Promise<void> {
     try {
@@ -13998,7 +14021,8 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
           })
         } else {
           // 使用入队时记录的目标远程目录（默认上传路径优先，否则当前远程目录）
-          await this.uploadPathToRemote(item.remoteDir, item.localPath)
+          // ★ 2026-11-01（meta）：forceOverwrite 透传（选择器上传 / 拖放上传的覆盖直传）
+          await this.uploadPathToRemote(item.remoteDir, item.localPath, undefined, item.forceOverwrite)
         }
       }
     } catch (e) {
@@ -15237,6 +15261,8 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
   /** 按钮在当前显示模式下是否可用（workspace 模式没有最小化/最大化） */
   topBarItemAvailable(id: TopBarItemId): boolean {
     if ((id === 'minimize' || id === 'maximize') && this.displayMode === 'workspace') return false
+    // ★ 2026-11-01（meta）：上传按钮只在远程目标就绪时出现（未连接时藏起，不占顶栏位置）
+    if (id === 'upload') return this.canPickerUpload
     return true
   }
 
@@ -15271,11 +15297,154 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       case 'pathMode': this.cyclePathMode(); break
       case 'layout': this.cycleLayoutMode(); break
       case 'transferLog': this.toggleTransferLog(); break
+      // ★ 2026-11-01（meta）：顶栏「上传」按钮 / ⋯ 菜单里的上传项 → 打开上传下拉（选文件/文件夹）
+      case 'upload': this.toggleUploadMenu(); break
       case 'settings': this.openPluginSettings(); break
       case 'minimize': this.minimize(); break
       case 'maximize': this.toggleMaximize(); break
       case 'close': this.close(); break
     }
+    this._safeDetect()
+  }
+
+  // ── ★ 2026-11-01（meta）：选择器上传（本机文件/文件夹 → 远程，不依赖本地栏布局） ──────────
+  //   入口：① 顶栏「上传」按钮下拉（上传文件…/上传文件夹…）；② 远程栏右键菜单同名两项。
+  //   行为：系统文件选择器多选 → 复用上传管线（_tryBatchUpload/_streamUploadOne）→ 覆盖直传（forceOverwrite=true，
+  //   跳过冲突检测、无二次确认）。现有本地栏右键上传 / 面板内跨栏拖拽不受影响（仍走冲突框）。
+
+  /** 选择器上传下拉菜单是否展开 */
+  _uploadMenuVisible = false
+  /** 下拉菜单的视口坐标（fixed 定位） */
+  _uploadMenuX = 0
+  _uploadMenuY = 0
+
+  /** 选择器上传目标：右栏远程端点（单栏远程布局下即当前面板）；未就绪返回 null */
+  private get _pickerUploadTarget(): { dir: string } | null {
+    const ep = this._paneEndpoint('remote')
+    if (!ep || ep.isLocal) return null
+    return { dir: ep.dir }
+  }
+
+  /** 选择器上传是否可用：远程已连接且目标目录就绪（顶栏按钮/右键菜单可见性共用） */
+  get canPickerUpload(): boolean {
+    return !!this._pickerUploadTarget && this.connected && !!this.sftpSession
+  }
+
+  /** 展开/收起上传下拉菜单 */
+  toggleUploadMenu(e?: MouseEvent): void {
+    e?.stopPropagation()
+    e?.preventDefault()
+    this._topBarOverflowVisible = false
+    // 定位到按钮正下方（fixed 定位，视口坐标）
+    const btn = e?.currentTarget as HTMLElement | null
+    if (btn && !this._uploadMenuVisible) {
+      const r = btn.getBoundingClientRect()
+      this._uploadMenuX = Math.max(4, r.left)
+      this._uploadMenuY = r.bottom + 3
+    }
+    this._uploadMenuVisible = !this._uploadMenuVisible
+    this._safeDetect()
+  }
+
+  /** 关闭上传下拉菜单（点外部/执行动作后） */
+  closeUploadMenu(): void {
+    if (!this._uploadMenuVisible) return
+    this._uploadMenuVisible = false
+    this._safeDetect()
+  }
+
+  /**
+   * 打开系统文件选择器。
+   * - 文件：`<input type="file" multiple>` 多选；
+   * - 文件夹：`<input type="file" webkitdirectory>`（Chrome 系一次选一个目录），用首个文件的
+   *   `webkitRelativePath` 从 `File.path` 反推出所选目录的真实路径（与 drop.ts 的 OS 路径策略同源）。
+   */
+  openUploadPicker(kind: 'files' | 'folder'): void {
+    this.closeUploadMenu()
+    if (!this.canPickerUpload) {
+      this.showToast(this.i18n.t('notify.notConnectedUpload'))
+      return
+    }
+    const input = kind === 'files' ? this._uploadFilesInput : this._uploadFolderInput
+    if (!input) {
+      log.warn('[picker-upload] hidden input not found for kind:', kind)
+      return
+    }
+    // 同一文件重复选择也触发 change
+    input.value = ''
+    input.click()
+  }
+
+  /** 隐藏 input 的 ViewChild（模板内 #uploadFilesInput / #uploadFolderInput） */
+  @ViewChild('uploadFilesInput') private _uploadFilesInput?: HTMLInputElement
+  @ViewChild('uploadFolderInput') private _uploadFolderInput?: HTMLInputElement
+
+  /** 选择器 change 事件：提取本机真实路径 → 覆盖直传 */
+  async onUploadPickerChange(ev: Event, kind: 'files' | 'folder'): Promise<void> {
+    const input = ev.target as HTMLInputElement | null
+    const files = input?.files ? Array.from(input.files) : []
+    if (input) input.value = ''
+    if (!files.length) return
+    if (!this.canPickerUpload) {
+      this.showToast(this.i18n.t('notify.notConnectedUpload'))
+      return
+    }
+    let paths: string[]
+    if (kind === 'folder') {
+      // webkitdirectory：所有 File 共享同一根目录；取首个文件的 webkitRelativePath 反推目录路径。
+      // 注意 webkitRelativePath 恒用 '/' 分隔，而 File.path 在 Windows 上是 '\' —— 先转成分隔符一致再比对。
+      const first = files[0] as any
+      const fullPath = (first?.path as string | undefined) || ''
+      const rel = (first?.webkitRelativePath as string | undefined) || ''
+      const relNative = rel.split('/').join(path.sep)
+      const rootName = rel ? rel.split('/')[0] : ''
+      const dirPath = fullPath && relNative && fullPath.endsWith(relNative) && rootName
+        ? fullPath.slice(0, fullPath.length - relNative.length) + rootName
+        : (fullPath ? path.dirname(fullPath) : '')
+      if (!dirPath) {
+        this.showToast(this.i18n.t('topbar.uploadPickFailed'))
+        return
+      }
+      paths = [dirPath]
+    } else {
+      paths = files
+        .map(f => (f as any).path as string | undefined)
+        .filter((p): p is string => !!p)
+      if (!paths.length) {
+        this.showToast(this.i18n.t('topbar.uploadPickFailed'))
+        return
+      }
+    }
+    await this._uploadPickedPaths(paths)
+  }
+
+  /**
+   * 选择器上传执行：与 ctxUpload 同链路（目标目录预检 → 批量打包 → 逐项入队 → 刷新），
+   * 唯一区别是 forceOverwrite=true —— 远端同名文件/目录直接覆盖，不弹冲突框（用户要求）。
+   */
+  private async _uploadPickedPaths(localPaths: string[]): Promise<void> {
+    const target = this._pickerUploadTarget
+    if (!target || !this.connected || !this.sftpSession) {
+      this.showToast(this.i18n.t('notify.notConnectedUpload'))
+      return
+    }
+    const paths = localPaths.filter(p => {
+      if (!safeEntryName(path.basename(p))) { log.warn('[picker-upload] skip unsafe name:', p); return false }
+      return true
+    })
+    if (!paths.length) return
+    // 目标目录预检（与 ctxUpload 一致：不存在时才弹框，正常情况直接过）
+    const requestedUploadDir = this._defaultUploadPath || target.dir
+    const uploadDir = await this._ensureTransferTargetDir('upload', requestedUploadDir)
+    if (!uploadDir) return
+    // 多选先试整批打包（覆盖直传）；单文件/目录直接逐项
+    if (paths.length >= 2 && await this._tryBatchUpload(paths, uploadDir, true)) {
+      await this._refreshRemoteFsPanes()
+      this._safeDetect()
+      return
+    }
+    await Promise.all(paths.map(p => this._streamUploadOne(p, uploadDir, true, true)))
+    await this._refreshRemoteFsPanes()
     this._safeDetect()
   }
 

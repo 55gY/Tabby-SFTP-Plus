@@ -40,7 +40,7 @@ export const GROUP_BY_MODES: GroupByMode[] = ['none', 'name', 'modified', 'type'
 
 export type ContextMenuAction =
   | 'newFolder' | 'newFile' | 'rename' | 'delete'
-  | 'openLocal' | 'viewFile' | 'editFile' | 'upload' | 'download' | 'transfer'
+  | 'openLocal' | 'viewFile' | 'editFile' | 'upload' | 'uploadFiles' | 'uploadFolder' | 'download' | 'transfer'
   | 'revealInExplorer' | 'chmod' | 'details'
   | 'copy' | 'cut' | 'paste' | 'refresh' | 'selectAll' | 'selectInvert' | 'copyPath'
 
@@ -75,6 +75,9 @@ interface FileMenuItemDef {
 
 export const FILE_MENU_REGISTRY: Record<ContextMenuAction, FileMenuItemDef> = {
   upload:           { labelKey: 'app.upload', category: 'transfer' },
+  // ★ 2026-11-01（meta）：选择器上传两项（本机→远程，不依赖本地栏），同属传输类
+  uploadFiles:      { labelKey: 'topbar.uploadFiles', category: 'transfer' },
+  uploadFolder:     { labelKey: 'topbar.uploadFolder', category: 'transfer' },
   download:         { labelKey: 'app.download', category: 'transfer' },
   // ★ 2026-10-20：两栏端点类型相同（本机↔本机 / 远程↔远程）时没有「上/下」方向之分
   transfer:         { labelKey: 'app.transfer', category: 'transfer' },
@@ -104,7 +107,8 @@ export const FILE_MENU_REGISTRY: Record<ContextMenuAction, FileMenuItemDef> = {
  *   （服务端 cp 直传）；远程↔远程**不同连接**改用 `upload`（推到另一台服务器＝上传）。
  */
 export const DEFAULT_FILE_MENU_ORDER: ContextMenuAction[] = [
-  'transfer', 'upload', 'download', 'openLocal', 'viewFile', 'editFile', 'revealInExplorer',
+  // ★ 2026-11-01（meta）：uploadFiles/uploadFolder 紧随 upload（同属传输类）；fillMenuOrder 会把老配置缺失的两项自动归位
+  'transfer', 'upload', 'uploadFiles', 'uploadFolder', 'download', 'openLocal', 'viewFile', 'editFile', 'revealInExplorer',
   'copy', 'cut', 'paste', 'rename', 'delete', 'chmod', 'details',
   'newFolder', 'newFile', 'refresh', 'selectAll', 'selectInvert', 'copyPath',
 ]
@@ -320,6 +324,8 @@ export class SftpContextMenuComponent implements OnChanges, OnDestroy {
   @Input() canView = false
   @Input() canEdit = false
   @Input() canTransfer = false
+  // ★ 2026-11-01（meta）：选择器上传两项的可见性开关（父组件按「远程栏 + 已连接」计算后传入）
+  @Input() pickerUploadEnabled = false
   @Input() modKey = 'Ctrl'
   // ★ 2026-09-20 A8 审计修复：删除两个死输入——isZh 从未被父模板传入且模板未使用；
   //   hasFileActions 已 @deprecated 且模板从未读取（父组件却每轮变更检测都计算并传值，整条链路空转）。
@@ -493,6 +499,9 @@ export class SftpContextMenuComponent implements OnChanges, OnDestroy {
   isActionVisible(a: ContextMenuAction): boolean {
     switch (a) {
       case 'upload': return this.hasUpload
+      // ★ 2026-11-01（meta）：选择器上传两项只在远程栏右键 + 远程已连接时出现（与顶栏按钮同条件）
+      case 'uploadFiles': return this.pickerUploadEnabled && this.dataPane === 'remote'
+      case 'uploadFolder': return this.pickerUploadEnabled && this.dataPane === 'remote'
       case 'download': return this.hasDownload
       case 'transfer': return this.hasTransfer
       case 'openLocal': return this.hasLocalOpen

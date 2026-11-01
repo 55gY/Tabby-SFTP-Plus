@@ -1951,6 +1951,9 @@ msgstr "本地复制"
 msgid "notify.dropTargetNotLocal"
 msgstr "当前端点不是本机磁盘，不支持拖放到此"
 
+msgid "notify.dropOsPathsUnresolvable"
+msgstr "未能读取拖放文件的路径，请改用顶栏「上传」按钮"
+
 msgid "conflict.digestUnavailableRemote"
 msgstr "摘要不可用（文件大小不同，或远程服务器不支持）"
 
@@ -2001,6 +2004,18 @@ msgstr "路径模式"
 
 msgid "topbar.minimize"
 msgstr "最小化"
+
+msgid "topbar.upload"
+msgstr "上传"
+
+msgid "topbar.uploadFiles"
+msgstr "上传文件…"
+
+msgid "topbar.uploadFolder"
+msgstr "上传文件夹…"
+
+msgid "topbar.uploadPickFailed"
+msgstr "未能读取所选文件的路径"
 
 msgid "settings.connPickerTrigger"
 msgstr "连接切换器唤起方式"

@@ -140,17 +140,29 @@ export interface DropContextPort {
   isLocalPaneTarget?(pane: DropPane): boolean
 }
 
+/** ★ 2026-11-01（meta）：上传端口的可选项（覆盖直传 / 本机源声明） */
+export interface DropUploadOpts {
+  /** true = 跳过冲突检测、远端同名直接覆写（选择器上传 / OS 拖放到远程） */
+  forceOverwrite?: boolean
+  /** true = 源确定是本机磁盘路径（OS 拖放），面板侧跳过左栏远程的 r2r 分支 */
+  srcIsLocal?: boolean
+}
+
 export interface DropTransferPort {
   uploadToRemote(remoteDir: string, localPath: string): Promise<boolean>
-  /** 上传入队：预注册占位条目 + 并发调度（与下载对称）；destRemoteDir 可选覆盖目标目录 */
-  streamUploadOne(localPath: string, destRemoteDir?: string): Promise<void>
+  /**
+   * ★ 2026-11-01（meta）：opts 扩展 ——
+   *   forceOverwrite=true 时跳过冲突检测直接覆写（选择器上传 / OS 拖放到远程）；
+   *   srcIsLocal=true 时源确定是本机磁盘（OS 拖放），面板侧跳过左栏远程的 r2r 分支。
+   */
+  streamUploadOne(localPath: string, destRemoteDir?: string, opts?: DropUploadOpts): Promise<void>
   /**
    * ★ 2026-09-29（四）：多选/拖拽多项先试「整批打成一个归档」。
    * 返回 true = 本批已由打包通道处理完，调用方**必须直接收工**（再逐项入队会重传整批）；
    * 返回 false = 未接管，按原有逐项流程处理。
    * 可选成员：未实现时按「未接管」处理 —— 拖拽在任何情况下都不能因这条加速路径变差。
    */
-  tryUploadBatch?(localPaths: string[], remoteDir: string): Promise<boolean>
+  tryUploadBatch?(localPaths: string[], remoteDir: string, opts?: DropUploadOpts): Promise<boolean>
   downloadRemoteEntry(entry: RemoteDropEntry, destLocalDir?: string): Promise<void>
   /**
    * ★ 2026-10-20（用户反馈）：目标栏是**远程端点**（左栏切到远程 / 右栏本身是远程）时的跨栏通道 ——
@@ -187,6 +199,11 @@ export interface DropNotifyPort {
    * 可选成员：未实现（旧调用方/未接线）时静默拒绝，绝不退化成「往 POSIX 路径写本地文件」。
    */
   dropTargetNotLocal?(): void
+  /**
+   * ★ 2026-11-01（meta）：OS 拖放带了文件对象、但所有路径提取策略都失败时的可见提示。
+   * 此前静默吞掉（osPaths 为空直接 return），用户以为「拖放不支持」。
+   */
+  dropOsPathsUnresolvable?(): void
 }
 
 export interface DropDragStatePort {
@@ -249,12 +266,12 @@ export class DropUseCase {
    * 端口未实现 / 抛异常一律按「未接管」处理：批量打包只是叠加在逐项通道之上的加速，
    * 它自己出任何意外都不该让这次拖拽失败（那会比没有它更差）。
    */
-  private async _tryBatchUpload(paths: string[], remoteDir: string): Promise<boolean> {
+  private async _tryBatchUpload(paths: string[], remoteDir: string, opts?: DropUploadOpts): Promise<boolean> {
     if (paths.length < 2) return false
     const f = this.ports.transfer.tryUploadBatch
     if (!f) return false
     try {
-      return await f(paths, remoteDir)
+      return await f(paths, remoteDir, opts)
     } catch (e) {
       log.warn('[batch-upload] drop batch path threw, using per-file flow:', e)
       return false
@@ -449,8 +466,10 @@ export class DropUseCase {
     if (targetPane === 'remote') {
       if (!ctx.isConnected() || !ctx.hasSftpSession()) return
       const remoteDir = destDirOverride || ctx.getRemotePath()
+      // ★ 2026-11-01（meta）：OS 拖放到远程 = 覆盖直传（forceOverwrite，无二次确认；srcIsLocal 声明本机源）
+      const owOpts: DropUploadOpts = { forceOverwrite: true, srcIsLocal: true }
       // ★ 2026-09-29（四）：从系统资源管理器拖入多个条目时同样先试整批打包
-      if (await this._tryBatchUpload(osPaths, remoteDir)) {
+      if (await this._tryBatchUpload(osPaths, remoteDir, owOpts)) {
         if (this.ports.conflict.hasPendingConflicts()) {
           this.ports.conflict.showConflictDialog()
         }
@@ -464,7 +483,7 @@ export class DropUseCase {
       }
       await Promise.all(osPaths.map(async (p) => {
         try {
-          await this.ports.transfer.streamUploadOne(p, remoteDir)
+          await this.ports.transfer.streamUploadOne(p, remoteDir, owOpts)
         } catch (e) {
           log.error('Upload failed for', p, e)
         }
@@ -515,9 +534,10 @@ export interface PanelDropHost {
    */
   enqueueLocalSamePaneConflict?(src: string, dest: string, isDir: boolean): Promise<void> | void
   uploadPathToRemote(remoteDir: string, localPath: string): Promise<boolean>
-  streamUploadOne(localPath: string, destRemoteDir?: string): Promise<void>
+  // ★ 2026-11-01（meta）：opts 透传（覆盖直传 / 本机源声明），见 DropUploadOpts
+  streamUploadOne(localPath: string, destRemoteDir?: string, opts?: DropUploadOpts): Promise<void>
   /** ★ 2026-09-29（四）：多选批量打包入口（可选，未实现则一律逐项） */
-  tryUploadBatch?(localPaths: string[], remoteDir: string): Promise<boolean>
+  tryUploadBatch?(localPaths: string[], remoteDir: string, opts?: DropUploadOpts): Promise<boolean>
   streamDownloadOne(file: SFTPFile, targetLocalDir?: string): Promise<void>
   /**
    * ★ 2026-10-20（用户反馈）：远程条目拖到**另一栏的远程端点**（远程↔远程拖拽）。
@@ -547,6 +567,15 @@ export class PanelDropAdapter {
     ev.preventDefault()
     const rawPayload = parseDragPayload(ev)
     const osPaths = await getDroppedOsPaths(ev, this.host.dropTmpScope)
+    // ★ 2026-11-01（meta）：拖进来的是 OS 文件、但一条路径都提不出来 ⇒ toast 明示（此前静默吞掉）
+    if (!rawPayload && !osPaths.length) {
+      const dt = ev.dataTransfer
+      const hadFiles = !!dt && ((dt.files?.length ?? 0) > 0 || (dt.items?.length ?? 0) > 0)
+      if (hadFiles) {
+        this._notifyOsPathsUnresolvable()
+        return
+      }
+    }
     await this.useCase.execute({ targetPane, rawPayload, osPaths, destDirOverride, targetPaneId })
   }
 
@@ -563,11 +592,12 @@ export class PanelDropAdapter {
       },
       transfer: {
         uploadToRemote: (remoteDir, localPath) => host.uploadPathToRemote(remoteDir, localPath),
-        streamUploadOne: (localPath, destRemoteDir) => host.streamUploadOne(localPath, destRemoteDir),
+        // ★ 2026-11-01（meta）：opts 透传给面板（覆盖直传 / 本机源声明）
+        streamUploadOne: (localPath, destRemoteDir, opts) => host.streamUploadOne(localPath, destRemoteDir, opts),
         // ★ 2026-09-29（四）：可选端口逐跳转发。两端都是 `?` 成员时 TS 不会报「漏转发」，
         //   故此处显式做一次存在性判断（未实现即视为「未接管」）
-        tryUploadBatch: (localPaths, remoteDir) =>
-          host.tryUploadBatch ? host.tryUploadBatch(localPaths, remoteDir) : Promise.resolve(false),
+        tryUploadBatch: (localPaths, remoteDir, opts) =>
+          host.tryUploadBatch ? host.tryUploadBatch(localPaths, remoteDir, opts) : Promise.resolve(false),
         downloadRemoteEntry: (entry, destLocalDir) => host.streamDownloadOne(this._toSftpFile(entry), destLocalDir),
         // ★ 2026-10-20：目标栏是远程端点时的跨栏直传（可选端口，同样显式判存在性）
         transferRemoteEntries: (entries, destDir, destPane) =>
@@ -596,6 +626,8 @@ export class PanelDropAdapter {
         copyFailed: (fileName) => this._notifyCopyFailed(fileName),
         // ★ 2026-10-19 P1：目标栏为左栏远程端点时的拒绝提示（见 DropNotifyPort 注释）
         dropTargetNotLocal: () => this._notifyNonLocalTarget(),
+        // ★ 2026-11-01（meta）：OS 路径提取失败时的可见提示（不再静默）
+        dropOsPathsUnresolvable: () => this._notifyOsPathsUnresolvable(),
       },
       dragState: {
         reset: () => host.resetFileDragState(),
@@ -640,6 +672,15 @@ export class PanelDropAdapter {
     log.warn('[drop] reject drop: target pane is not a local disk endpoint (left panel switched to remote)')
     try {
       const msg = this.host.i18n.t('notify.dropTargetNotLocal')
+      this.host.notifications?.error?.(msg, '')
+    } catch {}
+  }
+
+  /** ★ 2026-11-01（meta）：OS 拖放的路径提不出来 —— toast 明示，不再静默 */
+  private _notifyOsPathsUnresolvable(): void {
+    log.warn('[drop] OS drop contained file objects but no path could be resolved')
+    try {
+      const msg = this.host.i18n.t('notify.dropOsPathsUnresolvable')
       this.host.notifications?.error?.(msg, '')
     } catch {}
   }

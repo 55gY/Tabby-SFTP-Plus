@@ -459,17 +459,23 @@ export class PanelTransferCoordinator {
     this._activeTransferSlots.delete(buildTransferSlotKey(direction, remotePath, localPath))
   }
 
-  uploadPathToRemote(remoteDir: string, localPath: string, top?: FolderTransferCtx): Promise<boolean> {
+  uploadPathToRemote(
+    remoteDir: string,
+    localPath: string,
+    top?: FolderTransferCtx,
+    // ★ 2026-11-01（meta）：覆盖直传（选择器上传 / 拖放上传）—— 跳过冲突检测直接覆写
+    forceOverwrite = false,
+  ): Promise<boolean> {
     // ★ 建议#52修复：dispose后不再启动新传输
     if (this._disposed) return Promise.resolve(false)
     // ★ 2026-09-25 P1：顶层调用做重复入队拦截（嵌套子目录/冲突覆盖重入必须放行）
     if (top) {
-      return this._runScopedFolderTask(() => this.uploadUseCase.execute(remoteDir, localPath, top))
+      return this._runScopedFolderTask(() => this.uploadUseCase.execute(remoteDir, localPath, top, undefined, forceOverwrite))
     }
     const slotName = path.basename(localPath)
     const slotRemote = path.posix.join(remoteDir, slotName)
     if (!this._claimTransferSlot('upload', slotRemote, localPath, slotName)) return Promise.resolve(false)
-    return this._runScopedFolderTask(() => this.uploadUseCase.execute(remoteDir, localPath, top))
+    return this._runScopedFolderTask(() => this.uploadUseCase.execute(remoteDir, localPath, top, undefined, forceOverwrite))
       .finally(() => this._releaseTransferSlot('upload', slotRemote, localPath))
   }
 
@@ -539,7 +545,13 @@ export class PanelTransferCoordinator {
    * displayName 由调用方（面板）用 i18n 组装后传入：本类不做 i18n，且这个字符串会同时进
    * 进度条目与传输记录。
    */
-  uploadBatchToRemote(localPaths: string[], remoteDir: string, displayName: string): Promise<boolean> {
+  uploadBatchToRemote(
+    localPaths: string[],
+    remoteDir: string,
+    displayName: string,
+    // ★ 2026-11-01（meta）：覆盖直传（选择器上传 / 拖放上传）—— 批量用例内直接退回逐文件
+    forceOverwrite = false,
+  ): Promise<boolean> {
     if (localPaths.length < 2) return Promise.resolve(false)
     const claimed: Array<[string, string]> = []
     for (const localPath of localPaths) {
@@ -552,7 +564,7 @@ export class PanelTransferCoordinator {
       claimed.push([remoteTarget, localPath])
     }
     return this._runScopedFolderTask(
-      () => this.uploadBatchUseCase.execute(localPaths, remoteDir, displayName),
+      () => this.uploadBatchUseCase.execute(localPaths, remoteDir, displayName, forceOverwrite),
     )
       // 'success' / 'failed' 都算「已接管」：前者完成，后者是仅 TAR 下的硬失败（通道内已通知用户）
       .then(r => r !== 'fallback')
