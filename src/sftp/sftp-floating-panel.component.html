@@ -845,6 +845,7 @@
         (choice)="resolveDirMissing($event)">
       </sftp-dir-missing-dialog>
 
+      <!-- ★ 2026-11-01（meta）：pickerUploadEnabled = 选择器上传两项的可见性（远程栏 + 已连接） -->
       <sftp-context-menu
         [i18n]="i18n"
         [menuVisible]="contextMenuVisible"
@@ -863,7 +864,6 @@
         [canTransfer]="_ctxCanTransfer"
         [modKey]="modKey"
         [menuOrder]="contextMenuOrder"
-        <!-- ★ 2026-11-01（meta）：选择器上传两项的可见性（远程栏 + 已连接） -->
         [pickerUploadEnabled]="canPickerUpload"
         [panelHotkeyShortcuts]="contextMenuHotkeyShortcuts"
         [groupByPane]="contextMenuEntry ? null : contextMenuDisplayPane"
