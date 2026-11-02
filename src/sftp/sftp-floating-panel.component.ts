@@ -4994,7 +4994,6 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       log.warn('[panel-geom] persist failed:', e)
     }
   }
-
   /** 把几何值归一化为「相对父窗口的百分比」。
    *  - 已是 %（如 "96%"）原样返回；
    *  - px（如 "820px"）按当前父窗口尺寸换算为 %；
@@ -15354,10 +15353,9 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
   }
 
   /**
-   * 打开系统文件选择器。
-   * - 文件：`<input type="file" multiple>` 多选；
-   * - 文件夹：`<input type="file" webkitdirectory>`（Chrome 系一次选一个目录），用首个文件的
-   *   `webkitRelativePath` 从 `File.path` 反推出所选目录的真实路径（与 drop.ts 的 OS 路径策略同源）。
+   * 右键菜单「上传」入口：程序化激活隐藏 label（经 label 原生行为间接触发 input，
+   * 绕开 file input 程序化 .click() 在某些 Electron 环境被吞的问题）。
+   * 顶栏下拉菜单直接用 <label> 包 input（用户点 label 即原生激活，不走本方法）。
    */
   openUploadPicker(kind: 'files' | 'folder'): void {
     this.closeUploadMenu()
@@ -15365,24 +15363,25 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       this.showToast(this.i18n.t('notify.notConnectedUpload'))
       return
     }
-    const input = kind === 'files' ? this._uploadFilesInput : this._uploadFolderInput
-    if (!input) {
-      log.warn('[picker-upload] hidden input not found for kind:', kind)
+    const label = kind === 'files' ? this._uploadFilesLabel : this._uploadFolderLabel
+    if (!label) {
+      log.warn('[picker-upload] hidden label not found for kind:', kind)
+      this.showToast(this.i18n.t('topbar.uploadPickFailed'))
       return
     }
-    // 同一文件重复选择也触发 change
-    input.value = ''
-    input.click()
+    label.click()
   }
 
-  /** 隐藏 input 的 ViewChild（模板内 #uploadFilesInput / #uploadFolderInput） */
-  @ViewChild('uploadFilesInput') private _uploadFilesInput?: HTMLInputElement
-  @ViewChild('uploadFolderInput') private _uploadFolderInput?: HTMLInputElement
+  /** 隐藏 label 的 ViewChild（模板内 #uploadFilesLabel / #uploadFolderLabel） */
+  @ViewChild('uploadFilesLabel') private _uploadFilesLabel?: HTMLLabelElement
+  @ViewChild('uploadFolderLabel') private _uploadFolderLabel?: HTMLLabelElement
 
   /** 选择器 change 事件：提取本机真实路径 → 覆盖直传 */
   async onUploadPickerChange(ev: Event, kind: 'files' | 'folder'): Promise<void> {
+    this.closeUploadMenu()
     const input = ev.target as HTMLInputElement | null
     const files = input?.files ? Array.from(input.files) : []
+    // 同一文件/夹重复选择也触发 change
     if (input) input.value = ''
     if (!files.length) return
     if (!this.canPickerUpload) {
@@ -15393,9 +15392,9 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
     if (kind === 'folder') {
       // webkitdirectory：所有 File 共享同一根目录；取首个文件的 webkitRelativePath 反推目录路径。
       // 注意 webkitRelativePath 恒用 '/' 分隔，而 File.path 在 Windows 上是 '\' —— 先转成分隔符一致再比对。
-      const first = files[0] as any
-      const fullPath = (first?.path as string | undefined) || ''
-      const rel = (first?.webkitRelativePath as string | undefined) || ''
+      const first = files[0]
+      const fullPath = this._pickedFilePath(first)
+      const rel = ((first as any)?.webkitRelativePath as string | undefined) || ''
       const relNative = rel.split('/').join(path.sep)
       const rootName = rel ? rel.split('/')[0] : ''
       const dirPath = fullPath && relNative && fullPath.endsWith(relNative) && rootName
@@ -15408,7 +15407,7 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       paths = [dirPath]
     } else {
       paths = files
-        .map(f => (f as any).path as string | undefined)
+        .map(f => this._pickedFilePath(f))
         .filter((p): p is string => !!p)
       if (!paths.length) {
         this.showToast(this.i18n.t('topbar.uploadPickFailed'))
@@ -15416,6 +15415,23 @@ export class SftpFloatingPanel extends SftpPanelBookmarkController implements On
       }
     }
     await this._uploadPickedPaths(paths)
+  }
+
+  /**
+   * ★ 2026-11-01（meta）：取选择器 File 的本机真实路径。
+   * `File.path` 是 Electron 扩展，在某些版本/场景下为空（drop.ts 的 getDroppedOsPaths 早有此教训），
+   * 为空时回退到 `webUtils.getPathForFile()`（Electron 22+，input 选择的文件同样适用）。
+   */
+  private _pickedFilePath(f: File): string {
+    const p = (f as any)?.path as string | undefined
+    if (p) return p
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { webUtils } = require('electron')
+      const wp = webUtils?.getPathForFile?.(f)
+      if (typeof wp === 'string' && wp) return wp
+    } catch { /* 非 Electron 环境或版本不支持 */ }
+    return ''
   }
 
   /**

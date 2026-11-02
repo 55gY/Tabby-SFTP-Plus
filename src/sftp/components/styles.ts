@@ -587,6 +587,23 @@ export const SFTP_PANEL_STYLES = `
       cursor: pointer;
     }
     .sftp-root .upload-dropdown-item:hover { background: var(--_hover); }
+    /* ★ 2026-11-01（meta）：选择器上传的隐藏 input —— 渲染但不可见（见模板注释：display:none 会被 Chromium 禁掉程序化点击） */
+    .sftp-root .upload-picker-input {
+      position: fixed;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+    /* ★ 2026-11-01（meta）：右键菜单程序化激活用的隐藏 label（包 input，点 label 间接触发） */
+    .sftp-root .upload-picker-label {
+      position: fixed;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
     /* ★ 2026-10-23（Deepseek-V4.1-Flash）：每行 = 「执行按钮 + 图钉」，所以行本身从 <button> 改成 div。
        ⛔ 别改回 button：HTML 不允许 button 嵌套 button，浏览器会把图钉拆到行外。 */
     .sftp-root .topbar-overflow-item {

@@ -77,7 +77,8 @@ export type PaneSortAction = { col: string }
 @Component({
   selector: 'sftp-file-pane',
   template: `
-    <div class="pane" (mousedown)="onPaneAreaMouseDown($event)">
+    <div class="pane" (mousedown)="onPaneAreaMouseDown($event)"
+      (dragover)="onPaneDragOver($event)" (drop)="onPaneDrop($event)">
       <div class="pane-title" *ngIf="resolvedPaneCustomOrder.length">
         <ng-container *ngFor="let item of resolvedPaneCustomOrder">
           <!-- ★ 2026-10-19（Deepseek-V4.1-Flash）：端点标识可作为「连接切换器」入口（按配置开启）
@@ -758,6 +759,25 @@ export class SftpFilePaneComponent {
     event.preventDefault()
     event.stopPropagation()
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+  }
+
+  /**
+   * ★ 2026-11-01（meta）：面板级拖放兜底 —— 工具栏/标题区没有自己的 dragover，
+   *   文件拖到这些区域时光标会显示「禁止」。这里只处理 .pane-list 之外的区域
+   *   （列表已有自己的绑定），转发给同一套 emitter（dragover 放行光标、drop 触发上传）。
+   *   dragenter/dragleave 的高亮状态仍由列表管理，避免状态机混乱。
+   */
+  private _isEventInPaneList(ev: DragEvent): boolean {
+    const t = ev.target as HTMLElement | null
+    return !!t?.closest?.('.pane-list')
+  }
+  onPaneDragOver(ev: DragEvent): void {
+    if (this._isEventInPaneList(ev)) return
+    this.listDragOver.emit(ev)
+  }
+  onPaneDrop(ev: DragEvent): void {
+    if (this._isEventInPaneList(ev)) return
+    this.listDrop.emit(ev)
   }
 
   onColHeaderMouseDown(col: string, event: MouseEvent): void {

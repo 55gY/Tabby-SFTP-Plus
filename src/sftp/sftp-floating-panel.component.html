@@ -355,22 +355,26 @@
       </div>
 
       <!-- ★ 2026-11-01（meta）：上传下拉菜单（顶栏「上传」按钮点开）。fixed 定位到按钮正下方，
-           点外部由面板 _docClickCapture 收起。 -->
+           点外部由面板 _docClickCapture 收起。
+           ★ 同日改：菜单项用 <label> 包 input —— 点 label 是浏览器原生激活 file input，
+           不走 JS 的 .click()（后者在该用户 Electron 环境实测两次无反应），最可靠。 -->
       <div class="upload-dropdown-menu" *ngIf="_uploadMenuVisible"
         [style.left.px]="_uploadMenuX" [style.top.px]="_uploadMenuY"
         (mousedown)="$event.stopPropagation()" (click)="$event.stopPropagation()">
-        <button class="upload-dropdown-item" (click)="openUploadPicker('files')">
-          {{ i18n.t('topbar.uploadFiles') }}
-        </button>
-        <button class="upload-dropdown-item" (click)="openUploadPicker('folder')">
-          {{ i18n.t('topbar.uploadFolder') }}
-        </button>
+        <label class="upload-dropdown-item">
+          <span>{{ i18n.t('topbar.uploadFiles') }}</span>
+          <input type="file" multiple class="upload-picker-input" (change)="onUploadPickerChange($event, 'files')">
+        </label>
+        <label class="upload-dropdown-item">
+          <span>{{ i18n.t('topbar.uploadFolder') }}</span>
+          <input type="file" webkitdirectory class="upload-picker-input" (change)="onUploadPickerChange($event, 'folder')">
+        </label>
       </div>
 
-      <!-- ★ 2026-11-01（meta）：选择器上传的隐藏 input（常驻 DOM，ViewChild 引用）。
-           文件多选 / 文件夹（webkitdirectory 一次选一个目录）。display:none 仍可 .click() 弹出选择器。 -->
-      <input #uploadFilesInput type="file" multiple style="display:none" (change)="onUploadPickerChange($event, 'files')">
-      <input #uploadFolderInput type="file" webkitdirectory style="display:none" (change)="onUploadPickerChange($event, 'folder')">
+      <!-- ★ 2026-11-01（meta）：右键菜单「上传」走程序化激活 —— 点隐藏 label（而非 input），
+           经 label 原生行为间接触发 input，绕开 file input 程序化 .click() 的限制。 -->
+      <label #uploadFilesLabel class="upload-picker-label"><input type="file" multiple class="upload-picker-input" (change)="onUploadPickerChange($event, 'files')"></label>
+      <label #uploadFolderLabel class="upload-picker-label"><input type="file" webkitdirectory class="upload-picker-input" (change)="onUploadPickerChange($event, 'folder')"></label>
 
       <!-- 标题栏右键菜单：还原默认面板大小 -->
       <div class="sftp-title-menu" *ngIf="topBarMenuVisible"
